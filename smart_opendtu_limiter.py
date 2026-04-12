@@ -92,18 +92,16 @@ class Config:
             key, _, value = line.partition("=")
             env[key.strip()] = value.strip()
 
-        def required(key: str) -> str:
-            if key not in env:
-                raise ConfigError(f".env is missing required key: {key}")
-            return env[key]
-
         def integer(key: str, default: str) -> int:
             try:
                 return int(env.get(key, default))
             except ValueError:
-                raise ConfigError(
-                    f".env value for {key} is not an integer: {env.get(key)}"
-                ) from None
+                raise ConfigError(f".env value for {key} is not an integer: {env.get(key)}") from None
+
+        def required(key: str) -> str:
+            if key not in env:
+                raise ConfigError(f".env is missing required key: {key}")
+            return env[key]
 
         return cls(
             opendtu_url=required("OPENDTU_URL"),
@@ -265,7 +263,7 @@ class SmartLimiter:
         return sum(1 for p in reading.dc_powers if p < limit * self.cfg.string_shade_ratio)
 
     def calculate_new_limit(self, reading: InverterReading) -> float | None:
-        """Return new limit % or None if no change needed."""
+        """Calculate new limit percentage, or None if no change needed."""
         ac = reading.ac_power
         current_pct = self.current_limit_pct or reading.limit_relative
 
@@ -281,11 +279,13 @@ class SmartLimiter:
             if constrained == 0:
                 log.info("  (no string at limit — sun is bottleneck, not limit)")
                 return None
+
             shaded = self._count_strings_shaded(reading)
             if shaded > 0:
-                new_pct = current_pct + self.cfg.step_pct * min(2, constrained)
+                step = self.cfg.step_pct * min(2, constrained)
             else:
-                new_pct = current_pct + self.cfg.step_pct
+                step = self.cfg.step_pct
+            new_pct = current_pct + step
         else:
             return None
 
