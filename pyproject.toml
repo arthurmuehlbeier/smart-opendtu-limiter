@@ -21,6 +21,9 @@ select = [
     "TCH",   # flake8-type-checking
     "RUF",   # ruff-specific
 ]
+ignore = [
+    "SIM108",  # prefer if/else for clarity over ternary
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["smart_opendtu_limiter"]

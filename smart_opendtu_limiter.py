@@ -96,7 +96,8 @@ class Config:
             try:
                 return int(env.get(key, default))
             except ValueError:
-                raise ConfigError(f".env value for {key} is not an integer: {env.get(key)}") from None
+                val = env.get(key)
+                raise ConfigError(f".env value for {key} is not an integer: {val}") from None
 
         def required(key: str) -> str:
             if key not in env:
