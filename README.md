@@ -139,4 +139,4 @@ npx markdownlint README.md
 
 ## License
 
-MIT
+[MIT](LICENSE) — free to use, modify, and distribute

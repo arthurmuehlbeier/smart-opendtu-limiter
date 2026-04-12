@@ -160,7 +160,7 @@ class SmartLimiter:
         signal.signal(signal.SIGINT, self._shutdown)
         signal.signal(signal.SIGTERM, self._shutdown)
 
-    def _shutdown(self, _signum: int, _frame: Any) -> None:
+    def _shutdown(self, _signum: int | None, _frame: Any | None) -> None:
         log.info("Shutdown signal received")
         self.running = False
 
