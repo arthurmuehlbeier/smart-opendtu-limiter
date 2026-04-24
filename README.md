@@ -3,25 +3,21 @@
 Dynamic feedback controller for Hoymiles HMS inverters with
 OpenDTU. Adjusts the inverter limit in real-time so partially
 shaded panels don't waste headroom on sunny ones, without
-exceeding the legal 800W feed-in limit.
+exceeding the legal feed-in limit.
 
 ## Problem
 
-A static 800W limit (50% on HMS-1600) distributes power evenly
-across all 4 strings. When some panels are shaded, they're
-capped below their potential while remaining strings could
-still produce more. The surplus capacity is lost.
+A static limit distributes power evenly across all strings.
+When some panels are shaded, they're capped below their potential
+while remaining strings could still produce more. The surplus
+capacity is lost.
 
 ## Solution
 
 The script monitors DC power per string via the OpenDTU API
-and raises the global limit when strings hit their individual
-caps. The inverter distributes remaining headroom to
-unconstrained strings, so shaded strings stay capped while
-sunny ones fill the budget.
-
-The controller only increases the limit when at least one string
-is constrained AND another is below 50% of the string limit.
+and raises the global limit when strings show usable power.
+In edge cases (partial shade, clouds), the algorithm **prefers
+5% more power over 5% less** to capture available solar energy.
 
 ## Requirements
 
@@ -50,6 +46,8 @@ cp .env.example .env
 | `MAX_LIMIT_PCT` | `100` | Never go above this limit (%) |
 | `INTERVAL_S` | `30` | Seconds between adjustment cycles |
 | `STEP_PCT` | `5` | Limit change per cycle in % points |
+| `SMOOTHER_MAX_INCREASES` | `3` | Max increases per window (prevents oscillation) |
+| `SMOOTHER_WINDOW_S` | `120` | Smoother time window in seconds |
 
 ## Usage
 
@@ -74,7 +72,8 @@ After=network.target
 [Service]
 Type=simple
 User=pi
-ExecStart=/usr/bin/python3 /home/pi/smart-opendtu-limiter/smart_opendtu_limiter.py
+WorkingDirectory=/home/pi/smart-opendtu-limiter
+ExecStart=/home/pi/smart-opendtu-limiter/venv/bin/python smart_opendtu_limiter.py
 Restart=on-failure
 RestartSec=60
 
@@ -92,43 +91,66 @@ journalctl -u smart-limiter -f   # watch logs
 Each cycle:
 
 1. Fetch current AC power and per-string DC power from OpenDTU
-2. Count how many strings are at their individual cap
-   (90% of string limit)
-3. If AC < target and at least one string is capped and another
-   is shaded -> increase limit by `STEP_PCT` (up to 2x if
-   multiple strings constrained)
-4. If AC > target -> decrease limit by `STEP_PCT` (2x if
-   overshoot > 50W)
-5. Otherwise -> no change
+2. **Overproduction (AC > target)**: decrease limit by `STEP_PCT`
+   (2x if overshoot > 50W)
+3. **Underproduction (AC < hysteresis_low)**:
+   - If any string is usable (above shade threshold) → increase limit
+   - If no strings usable → no change (panels blocked by clouds/shade)
+4. **Within hysteresis band**: no change
+5. Increases are rate-limited to prevent oscillation
 
-The limit command uses `limit_type=1` (relative, non-persistent,
-RAM-only), so there is zero flash wear on the inverter.
+The algorithm prefers conservative decreases and aggressive increases
+in edge cases — capturing more solar at slight risk of minor overproduction.
 
 ## Architecture
 
-```text
-Config (dataclass)          <- loaded from .env
-InverterReading (dataclass) <- parsed from OpenDTU API
-SmartLimiter                <- main controller class
-  fetch_inverter_data()     <- GET /api/livedata/status
-  fetch_limit_status()      <- GET /api/limit/status
-  send_limit()              <- POST /api/limit/config (type=1)
-  calculate_new_limit()     <- feedback controller logic
-  log_reading()             <- formatted status output
-  run_once() / run()        <- main loop
-main()                      <- argparse CLI entrypoint
 ```
+src/
+├── __init__.py       # Package exports
+├── config.py         # Configuration dataclass + .env parsing
+├── inverter.py       # InverterReading dataclass + parsing
+├── api.py            # OpenDTU HTTP client
+├── smoother.py       # Rate-limiter for limit increases
+├── controller.py     # Pure functions for power limiting logic
+└── cli.py            # Main entry point
+
+smart_opendtu_limiter.py  # Backwards-compatible wrapper
+
+tests/
+├── __init__.py
+├── test_config.py
+├── test_controller.py
+└── test_smoother.py
+```
+
+### Module responsibilities
+
+| Module | Responsibility |
+| --- | --- |
+| `config.py` | Load and validate .env settings |
+| `inverter.py` | Inverter state data model |
+| `api.py` | OpenDTU HTTP communication |
+| `smoother.py` | Rate-limit limit increases |
+| `controller.py` | Pure algorithm functions (testable) |
+| `cli.py` | Wire everything together |
 
 ## Development
 
 ```bash
+# install dependencies
+source venv/bin/activate
+pip install pytest requests
+
+# run tests
+python -m pytest tests/ -v
+
 # lint + format check
-ruff check smart_opendtu_limiter.py
-ruff format --check smart_opendtu_limiter.py
+ruff check src/ tests/ smart_opendtu_limiter.py
+ruff format --check src/ tests/ smart_opendtu_limiter.py
 
 # auto-fix
-ruff check --fix smart_opendtu_limiter.py
-ruff format smart_opendtu_limiter.py
+ruff check --fix src/ tests/ smart_opendtu_limiter.py
+ruff format src/ tests/ smart_opendtu_limiter.py
 
 # lint commit messages
 commitlint --from=HEAD~1
